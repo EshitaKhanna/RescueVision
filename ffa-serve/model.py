@@ -113,7 +113,6 @@ class VideoProcessor:
         self.net = FFA(gps=3, blocks=12)
         self.net = nn.DataParallel(self.net)
         self.net = self.net.to(device)
-        # Load pretrained model
         ckp = torch.load(model_path, map_location=device)
         self.net.load_state_dict(ckp['model'])
         self.net.eval()
@@ -138,31 +137,53 @@ class VideoProcessor:
         return dehazed
 
     def process_video(self, video_bytes):
-        video_array = np.frombuffer(video_bytes, np.uint8)
-        cap = cv2.VideoCapture()
-        cap.open(io.BytesIO(video_bytes))
+        # Create temporary files for input and output
+        temp_input = 'temp_input.mp4'
+        temp_output = 'temp_output.mp4'
 
+        # Save input video bytes to temporary file
+        with open(temp_input, 'wb') as f:
+            f.write(video_bytes)
+
+        # Open the video
+        cap = cv2.VideoCapture(temp_input)
         if not cap.isOpened():
             raise ValueError("Unable to open video")
 
+        # Get video properties
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        output = io.BytesIO()
-        out = cv2.VideoWriter(output,
-                            cv2.VideoWriter_fourcc(*'mp4v'),
-                            fps, (width, height))
+        # Create output video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
 
+        # Process each frame
+        frame_count = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
+            frame_count += 1
+            print(f"Processing frame {frame_count}/{total_frames}")
+
             dehazed_frame = self.process_frame(frame)
             out.write(dehazed_frame)
 
+        # Release everything
         cap.release()
         out.release()
 
-        return output.getvalue()
+        # Read the processed video
+        with open(temp_output, 'rb') as f:
+            processed_video = f.read()
+
+        # Clean up temporary files
+        import os
+        os.remove(temp_input)
+        os.remove(temp_output)
+
+        return processed_video
